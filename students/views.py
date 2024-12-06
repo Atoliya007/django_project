@@ -1,15 +1,23 @@
 from django.shortcuts import render
 from django.http import JsonResponse
+import pickle
+from rest_framework import generics
+from rest_framework.pagination import PageNumberPagination
 # Create your views here.
 from django.http import HttpResponse
 from rest_framework import status
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
+from rest_framework.filters import SearchFilter, OrderingFilter
+from django.db.models import Q
 from .models import Student
 from .serializers import StudentSerializer
 from django.core.paginator import Paginator
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.pagination import LimitOffsetPagination
+from django.db import connection
+from django_filters.rest_framework import DjangoFilterBackend
+
 # Create new student record
 @api_view(['POST'])
 def create_student(request):
@@ -21,29 +29,63 @@ def create_student(request):
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-# Get all students (with optional filters)
+
+#get a student data
 @api_view(['GET'])
 def get_students(request):
-    students = Student.objects.all()
-    page  = request.GET.get("page")
-    limit  = request.GET.get("limit")
-    paginator = Paginator(students,limit)
-    page_obj = paginator.get_page(page)               
-    page_data = list(paginator.object_list.values())
-    data = list(page_obj.object_list.values())
-    return JsonResponse({
-        'page': page_obj.number,
-        'total_pages': paginator.num_pages,
-        'total_items': paginator.count,
-        'data': data,
-    })
-    # Example filter: ?gender=Male
-    gender = request.query_params.get('gender', None)
-    if gender:
-        students = students.filter(gender=gender)
+    name = request.GET.get('name')
+    father_name = request.GET.get('father_name')
+    limit = int(request.GET.get('limit', 10))  # Number of records per page
+    page = int(request.GET.get('page', 1))
+    
+    count = 0
+    if (limit < 0 or limit > 100):
+        limit = 10
 
-    serializer = StudentSerializer(students, many=True)
-    return Response(serializer.data)
+    offset = 0
+    if (page - 1 > 0):
+        offset = (page - 1) * limit
+    
+    
+    print(offset)
+
+    query = ""
+    params = []
+    if (name):
+        query = query + f" and name like %s"
+        params.append(f"%{name}%")
+
+    if(father_name):
+        query = query + f" and father_name like %s"
+        params.append(f"%{father_name}%")
+
+   
+
+
+
+
+    with connection.cursor() as cursor:
+        cursor.execute('SELECT count(id) FROM students_student WHERE id != -1'+query, params)
+        # get a single line from the result
+        row = cursor.fetchone()
+        # get the value in the first column of the result (the only column)
+        count = row[0]
+
+    query = query + f" limit %s offset %s"
+    params.append(limit)
+    params.append(offset)
+
+    print(query)
+    data = []
+    for row in Student.objects.raw("SELECT * FROM students_student WHERE id != -1" + query, params):
+        data.append(StudentSerializer(row).data)
+
+    return JsonResponse({
+        'data': data,
+        'limit': limit,
+        'count': count
+    })
+
 
 # Get a student by ID
 @api_view(['GET'])
@@ -84,13 +126,12 @@ def delete_student(request, id):
     serializer = StudentSerializer(student)
     return Response(serializer.data)
 
-@api_view(['GET'])
-def filter_data(request):
-    students = Student.objects.all()
-    if request.method == 'GET':
-        st = request.GET.get('name')
-        students = Student.objects.filter(name=st)
-    return JsonResponse({
-        'name': st
-    })
+
+
+ 
+    
+
+
+
+
 
